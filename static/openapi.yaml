@@ -1,0 +1,367 @@
+openapi: 3.0.3
+info:
+  title: LoboStats API
+  version: 1.0.0
+  description: API estadística MVP con almacenamiento temporal en memoria.
+servers:
+  - url: /
+paths:
+  /api/health:
+    get:
+      summary: Comprueba el estado del servicio
+      responses:
+        '200':
+          description: Servicio disponible
+          content:
+            application/json:
+              schema:
+                type: object
+  /api/data/upload:
+    post:
+      summary: Carga un archivo de datos
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Dataset creado
+  /api/data/manual:
+    post:
+      summary: Crea un dataset manual
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ManualDataset'
+      responses:
+        '201':
+          description: Dataset creado
+  /api/data/{dataset_id}:
+    parameters:
+      - $ref: '#/components/parameters/DatasetId'
+    get:
+      summary: Obtiene un dataset paginado
+      parameters:
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 500, default: 50}
+      responses:
+        '200': {description: Filas y metadatos del dataset}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      summary: Elimina un dataset
+      responses:
+        '204': {description: Dataset eliminado}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/descriptive/summary:
+    post:
+      summary: Calcula estadísticas descriptivas y Shapiro-Wilk
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Resumen por columna}
+  /api/descriptive/frequencies:
+    post:
+      summary: Calcula frecuencias de una columna
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Frecuencias absolutas y porcentuales}
+  /api/charts/histogram:
+    post:
+      summary: Genera cuentas e intervalos de histograma
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Datos del histograma}
+  /api/charts/boxplot:
+    post:
+      summary: Genera estadísticas de boxplot
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Cuartiles, bigotes y atípicos}
+  /api/charts/scatter:
+    post:
+      summary: Obtiene puntos de dispersión
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Pares x/y válidos}
+  /api/hypothesis/t-test:
+    post:
+      summary: Ejecuta una prueba t
+      description: "type acepta one-sample, independent o paired. Consulte README para los campos de cada variante."
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Resultado, valor p e interpretación}
+  /api/hypothesis/anova:
+    post:
+      summary: Ejecuta ANOVA de una vía
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Resultado ANOVA e interpretación}
+  /api/hypothesis/chi-square:
+    post:
+      summary: Ejecuta chi-cuadrado de independencia
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Tabla, esperados, resultado e interpretación}
+  /api/hypothesis/correlation:
+    post:
+      summary: Calcula correlación de Pearson
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Coeficiente, valor p e interpretación}
+  /api/distributions/pdf:
+    post: &distributionOperation
+      summary: Evalúa una distribución de probabilidad
+      description: PDF para continuas y PMF para discretas. Consulte parámetros y límites en README.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DistributionRequest'}
+      responses:
+        '200': {description: Valor o valores y metadatos de la operación}
+        '400': {description: Distribución, parámetros o dominio inválidos}
+  /api/distributions/cdf:
+    post: *distributionOperation
+  /api/distributions/sf:
+    post: *distributionOperation
+  /api/distributions/ppf:
+    post: *distributionOperation
+  /api/distributions/interval:
+    post: *distributionOperation
+  /api/distributions/random:
+    post: *distributionOperation
+  /api/distributions/curve:
+    post: *distributionOperation
+  /api/distributions/fit:
+    post: &distributionFit
+      summary: Ajusta una distribución continua por máxima verosimilitud
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DistributionFitRequest'}
+      responses:
+        '200': {description: Parámetros MLE y pruebas AD, KS y chi-cuadrado}
+        '400': {description: Datos o candidata inválidos}
+  /api/distributions/goodness-of-fit:
+    post: *distributionFit
+  /api/distributions/identify:
+    post:
+      <<: *distributionFit
+      summary: Ajusta y ordena varias candidatas continuas
+  /api/distributions/probability-plot:
+    post:
+      <<: *distributionFit
+      summary: Genera puntos y bandas para un gráfico de probabilidad
+  /api/basic-stats/confidence-interval:
+    post: &statisticalPost
+      summary: Operación estadística o preparación de gráfico
+      description: Los campos específicos y ejemplos de payload están documentados en README y en la descripción de la ruta.
+      requestBody:
+        $ref: '#/components/requestBodies/JsonBody'
+      responses:
+        '200': {description: Resultado JSON seguro listo para consumo}
+        '400': {description: Payload, datos o supuestos mínimos inválidos}
+  /api/basic-stats/z-test:
+    post: *statisticalPost
+  /api/basic-stats/by-group:
+    post: *statisticalPost
+  /api/basic-stats/correlation-matrix:
+    post: *statisticalPost
+  /api/basic-stats/covariance-matrix:
+    post: *statisticalPost
+  /api/variance/normality:
+    post: *statisticalPost
+  /api/variance/levene:
+    post: *statisticalPost
+  /api/variance/bartlett:
+    post: *statisticalPost
+  /api/nonparametric/mann-whitney:
+    post: *statisticalPost
+  /api/nonparametric/wilcoxon:
+    post: *statisticalPost
+  /api/nonparametric/kruskal-wallis:
+    post: *statisticalPost
+  /api/nonparametric/friedman:
+    post: *statisticalPost
+  /api/nonparametric/sign-test:
+    post: *statisticalPost
+  /api/proportion/one-sample:
+    post: *statisticalPost
+  /api/proportion/two-sample:
+    post: *statisticalPost
+  /api/correlation/spearman:
+    post: *statisticalPost
+  /api/correlation/kendall:
+    post: *statisticalPost
+  /api/correlation/partial:
+    post: *statisticalPost
+  /api/power/t-test:
+    post: *statisticalPost
+  /api/power/anova:
+    post: *statisticalPost
+  /api/power/sample-size:
+    post: *statisticalPost
+  /api/anova/one-way:
+    post: *statisticalPost
+  /api/anova/two-way:
+    post: *statisticalPost
+  /api/anova/post-hoc:
+    post: *statisticalPost
+  /api/anova/repeated-measures:
+    post: *statisticalPost
+  /api/anova/main-effects:
+    post: *statisticalPost
+  /api/anova/interaction:
+    post: *statisticalPost
+  /api/charts/bar:
+    post: *statisticalPost
+  /api/charts/pie:
+    post: *statisticalPost
+  /api/charts/pareto:
+    post: *statisticalPost
+  /api/charts/qq:
+    post: *statisticalPost
+  /api/charts/violin:
+    post: *statisticalPost
+  /api/charts/dot:
+    post: *statisticalPost
+  /api/charts/line:
+    post: *statisticalPost
+  /api/charts/area:
+    post: *statisticalPost
+  /api/charts/interval:
+    post: *statisticalPost
+  /api/charts/pairplot:
+    post: *statisticalPost
+  /api/charts/bubble:
+    post: *statisticalPost
+  /api/charts/heatmap:
+    post: *statisticalPost
+  /api/charts/scatter-3d:
+    post: *statisticalPost
+components:
+  parameters:
+    DatasetId:
+      name: dataset_id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  schemas:
+    ManualDataset:
+      type: object
+      required: [name, columns, rows]
+      properties:
+        name: {type: string}
+        columns:
+          type: array
+          items: {type: string}
+        rows:
+          type: array
+          items:
+            type: array
+            items: {}
+    StatisticalRequest:
+      type: object
+      description: Payload flexible; consulte cada ruta y los ejemplos completos en README.md.
+      properties:
+        dataset_id: {type: string, format: uuid}
+        alpha: {type: number, minimum: 0, maximum: 1, default: 0.05}
+        column: {type: string}
+        columns: {type: array, items: {type: string}, maxItems: 20}
+        value_column: {type: string}
+        group_column: {type: string}
+        x: {type: string}
+        y: {type: string}
+        z: {type: string}
+        controls: {type: array, items: {type: string}, maxItems: 10}
+        method: {type: string}
+        statistic: {type: string, enum: [mean, median]}
+        confidence: {type: number, minimum: 0.5, maximum: 0.999, default: 0.95}
+        successes: {description: Entero o lista de dos enteros}
+        nobs: {description: Entero o lista de dos enteros}
+        null_proportion: {type: number, exclusiveMinimum: true, minimum: 0, exclusiveMaximum: true, maximum: 1}
+        effect_size: {type: number, exclusiveMinimum: true, minimum: 0}
+        power: {type: number, minimum: 0.01, maximum: 0.999}
+        sample_size: {type: number, minimum: 2}
+        factor_a: {type: string}
+        factor_b: {type: string}
+        interaction: {type: boolean, default: true}
+        typ: {type: integer, enum: [1, 2, 3], default: 2}
+        subject: {type: string}
+        within: {type: string}
+        value: {description: Nombre de columna o valor según la ruta}
+        category: {type: string}
+        group: {type: string}
+        group_by: {type: string}
+        aggregation: {type: string, enum: [sum, mean, median, count]}
+        density: {type: boolean}
+        kde: {type: boolean}
+    DistributionRequest:
+      type: object
+      required: [distribution, params]
+      properties:
+        distribution: {type: string, enum: [normal, t, chi2, f, binomial, poisson, hypergeom, exponential, gamma, beta, weibull, lognormal, uniform, logistic, gumbel_l, gumbel_r]}
+        params: {type: object, additionalProperties: {type: number}}
+        x: {description: Número finito o lista de hasta 10000 números finitos}
+        q: {description: Número o lista con probabilidades estrictamente entre 0 y 1}
+        confidence: {type: number, exclusiveMinimum: true, minimum: 0, exclusiveMaximum: true, maximum: 1}
+        size: {type: integer, minimum: 1, maximum: 10000}
+        seed: {type: integer, minimum: 0, maximum: 4294967295}
+        x_min: {type: number}
+        x_max: {type: number}
+        points: {type: integer, minimum: 2, maximum: 2000, default: 200}
+    DistributionFitRequest:
+      type: object
+      required: [dataset_id, column]
+      properties:
+        dataset_id: {type: string, format: uuid}
+        column: {type: string}
+        distribution: {type: string, enum: [normal, lognormal, weibull, weibull-3p, exponential, exponential-2p, gamma, logistic, gumbel_l, gumbel_r]}
+        candidates: {type: array, minItems: 1, maxItems: 10, uniqueItems: true, items: {type: string}}
+        bootstrap_reps: {type: integer, minimum: 20, maximum: 1000, default: 200}
+        confidence: {type: number, exclusiveMinimum: true, minimum: 0, exclusiveMaximum: true, maximum: 1, default: 0.95}
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: {type: string}
+            message: {type: string}
+            details: {}
+  requestBodies:
+    JsonBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/StatisticalRequest'
+  responses:
+    NotFound:
+      description: Dataset no encontrado
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
