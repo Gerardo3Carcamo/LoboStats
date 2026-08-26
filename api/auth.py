@@ -10,6 +10,8 @@ from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import (
     create_access_token,
     create_refresh_token,
+    get_csrf_token,
+    get_jwt,
     get_jwt_identity,
     jwt_required,
     set_access_cookies,
@@ -198,18 +200,31 @@ def login():
         user.password_hash = password_hasher.hash(data["password"])
     user.last_login_at = utcnow()
     db.session.commit()
-    response = jsonify({"user": user.to_dict()})
-    set_access_cookies(response, create_access_token(identity=str(user.id)))
-    set_refresh_cookies(response, create_refresh_token(identity=str(user.id)))
+    access_token = create_access_token(identity=str(user.id))
+    refresh_token = create_refresh_token(identity=str(user.id))
+    response = jsonify({
+        "user": user.to_dict(),
+        "csrf_access_token": get_csrf_token(access_token),
+        "csrf_refresh_token": get_csrf_token(refresh_token),
+    })
+    set_access_cookies(response, access_token)
+    set_refresh_cookies(response, refresh_token)
     return response
 
 
 @auth_bp.post("/refresh")
 @jwt_required(refresh=True)
 def refresh():
-    response = jsonify({"message": "Sesión renovada."})
-    set_access_cookies(response, create_access_token(identity=get_jwt_identity()))
+    access_token = create_access_token(identity=get_jwt_identity())
+    response = jsonify({"message": "Sesión renovada.", "csrf_access_token": get_csrf_token(access_token)})
+    set_access_cookies(response, access_token)
     return response
+
+
+@auth_bp.get("/refresh-csrf")
+@jwt_required(refresh=True)
+def refresh_csrf():
+    return jsonify({"csrf_refresh_token": get_jwt()["csrf"]})
 
 
 @auth_bp.post("/logout")
@@ -225,4 +240,4 @@ def me():
     user = db.session.get(User, int(get_jwt_identity()))
     if not user or not user.is_active:
         raise APIError("Sesión inválida.", 401, "invalid_session")
-    return jsonify({"user": user.to_dict()})
+    return jsonify({"user": user.to_dict(), "csrf_access_token": get_jwt()["csrf"]})

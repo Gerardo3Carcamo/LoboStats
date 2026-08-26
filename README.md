@@ -24,7 +24,7 @@ La configuración se obtiene del entorno. Son necesarias `DATABASE_URL`, `JWT_SE
 
 `JWT_COOKIE_SECURE=true` es obligatorio al desplegar sobre HTTPS y puede ser `false` en desarrollo. `CORS_ORIGINS` acepta orígenes separados por coma y nunca `*`; las respuestas CORS admiten credenciales. `AUTH_DISABLED` debe permanecer `false` salvo en tests internos. Con `FLASK_ENV=production` la aplicación no arranca si falta configuración requerida; en otros entornos auth responde 503.
 
-Los tokens access y refresh se entregan exclusivamente en cookies HttpOnly con `SameSite=Lax`. Las solicitudes mutables autenticadas deben copiar el valor de `csrf_access_token` al header `X-CSRF-TOKEN`; `/api/auth/refresh` usa `csrf_refresh_token`. Puede crear tablas con `flask --app app init-db`, `python scripts/init_db.py` o aplicar exactamente `migrations/001_auth.sql` mediante `python scripts/apply_auth_migration.py`.
+Los tokens access y refresh se entregan exclusivamente en cookies HttpOnly con `SameSite=Lax`. Los tokens CSRF se devuelven en login, refresh y `/me` para que un frontend en otro subdominio pueda enviarlos en `X-CSRF-TOKEN`; no son JWT ni conceden acceso por sí solos. `/api/auth/refresh-csrf` recupera el CSRF del refresh mediante una solicitud GET protegida por su cookie HttpOnly. Puede crear tablas con `flask --app app init-db`, `python scripts/init_db.py` o aplicar exactamente `migrations/001_auth.sql` mediante `python scripts/apply_auth_migration.py`.
 
 ## Docker
 

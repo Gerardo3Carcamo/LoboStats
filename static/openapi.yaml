@@ -62,14 +62,14 @@ paths:
   /api/auth/login:
     post:
       security: []
-      summary: Inicia sesión y establece cookies access/refresh y CSRF
+      summary: Inicia sesión, establece cookies JWT y devuelve tokens CSRF
       requestBody:
         required: true
         content:
           application/json:
             schema: {$ref: '#/components/schemas/LoginRequest'}
       responses:
-        '200': {description: Sesión iniciada; cookies JWT HttpOnly SameSite=Lax}
+        '200': {description: Sesión iniciada; cookies JWT HttpOnly y tokens CSRF en JSON}
         '401': {description: Credenciales inválidas}
   /api/auth/refresh:
     post:
@@ -79,11 +79,15 @@ paths:
       responses:
         '200': {description: Cookie access renovada}
         '401': {description: Refresh ausente o inválido}
+  /api/auth/refresh-csrf:
+    get:
+      summary: Devuelve el token CSRF asociado a la cookie refresh
+      responses:
+        '200': {description: Token CSRF de refresh}
+        '401': {description: Refresh ausente o inválido}
   /api/auth/logout:
     post:
       summary: Elimina las cookies de sesión
-      parameters:
-        - $ref: '#/components/parameters/CsrfToken'
       responses:
         '200': {description: Sesión cerrada}
   /api/auth/me:

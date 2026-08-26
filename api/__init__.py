@@ -50,6 +50,7 @@ def create_app(config: dict | None = None) -> Flask:
         VERIFICATION_CODE_SECRET=os.getenv("VERIFICATION_CODE_SECRET"),
         JWT_TOKEN_LOCATION=["cookies"],
         JWT_COOKIE_CSRF_PROTECT=True,
+        JWT_CSRF_IN_COOKIES=False,
         JWT_COOKIE_SAMESITE="Lax",
         JWT_COOKIE_SECURE=_env_bool("JWT_COOKIE_SECURE"),
         MAIL_SERVER=os.getenv("MAIL_SERVER"),

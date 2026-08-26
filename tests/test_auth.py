@@ -51,10 +51,6 @@ def register_and_verify(app, client, email="alumno@uadec.edu.mx"):
     assert client.post("/api/auth/verify", json={"email": email, "code": code}).status_code == 200
 
 
-def csrf(client, name="csrf_access_token"):
-    return client.get_cookie(name).value
-
-
 def test_production_rejects_missing_auth_configuration(monkeypatch):
     for name in REQUIRED_ENV:
         monkeypatch.delenv(name, raising=False)
@@ -128,19 +124,24 @@ def test_login_cookies_me_refresh_logout_and_api_protection(auth_app, auth_clien
     cookies = login.headers.getlist("Set-Cookie")
     assert any("access_token_cookie=" in value and "HttpOnly" in value and "SameSite=Lax" in value for value in cookies)
     assert any("refresh_token_cookie=" in value and "HttpOnly" in value for value in cookies)
-    assert auth_client.get("/api/auth/me").status_code == 200
+    assert not any("csrf_access_token=" in value for value in cookies)
+    access_csrf = login.get_json()["csrf_access_token"]
+    refresh_csrf = login.get_json()["csrf_refresh_token"]
+    me = auth_client.get("/api/auth/me")
+    assert me.status_code == 200 and me.get_json()["csrf_access_token"] == access_csrf
 
     created = auth_client.post(
         "/api/data/manual",
         json={"name": "protected", "columns": ["x"], "rows": [[1]]},
-        headers={"X-CSRF-TOKEN": csrf(auth_client)},
+        headers={"X-CSRF-TOKEN": access_csrf},
     )
     assert created.status_code == 201
-    refreshed = auth_client.post(
-        "/api/auth/refresh", headers={"X-CSRF-TOKEN": csrf(auth_client, "csrf_refresh_token")}
-    )
+    refresh_csrf_response = auth_client.get("/api/auth/refresh-csrf")
+    assert refresh_csrf_response.get_json()["csrf_refresh_token"] == refresh_csrf
+    refreshed = auth_client.post("/api/auth/refresh", headers={"X-CSRF-TOKEN": refresh_csrf})
     assert refreshed.status_code == 200
-    logout = auth_client.post("/api/auth/logout", headers={"X-CSRF-TOKEN": csrf(auth_client)})
+    assert refreshed.get_json()["csrf_access_token"]
+    logout = auth_client.post("/api/auth/logout")
     assert logout.status_code == 200
     assert auth_client.get("/api/auth/me").status_code == 401
 
