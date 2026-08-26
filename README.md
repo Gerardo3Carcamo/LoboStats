@@ -1,6 +1,6 @@
 # LoboStats Backend
 
-Backend para carga temporal de datos, estadística descriptiva, inferencia, potencia, ANOVA, distribuciones y datos listos para gráficos. Los datasets se guardan **solo en memoria**: no hay base de datos y todo se pierde al reiniciar el proceso.
+Backend para autenticación, carga temporal de datos, estadística descriptiva, inferencia, potencia, ANOVA, distribuciones y datos listos para gráficos. Los usuarios se guardan en MySQL; los datasets estadísticos permanecen solo en memoria.
 
 ## Requisitos e instalación
 
@@ -10,10 +10,21 @@ Backend para carga temporal de datos, estadística descriptiva, inferencia, pote
 python -m venv .venv
 .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+Copy-Item .env.example .env
+# Configure las variables de .env; el archivo está excluido de Git.
+python scripts/init_db.py
 python app.py
 ```
 
 La API queda disponible en `http://localhost:5000`. La documentación interactiva está en `/api/docs` y el contrato en `/api/openapi.yaml`.
+
+## Configuración y autenticación
+
+La configuración se obtiene del entorno. Son necesarias `DATABASE_URL`, `JWT_SECRET_KEY`, `VERIFICATION_CODE_SECRET`, `MAIL_SERVER`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_USE_TLS` y `MAIL_DEFAULT_SENDER`. Use `mysql+pymysql://...` en `DATABASE_URL`. Nunca almacene valores reales en el repositorio.
+
+`JWT_COOKIE_SECURE=true` es obligatorio al desplegar sobre HTTPS y puede ser `false` en desarrollo. `CORS_ORIGINS` acepta orígenes separados por coma y nunca `*`; las respuestas CORS admiten credenciales. `AUTH_DISABLED` debe permanecer `false` salvo en tests internos. Con `FLASK_ENV=production` la aplicación no arranca si falta configuración requerida; en otros entornos auth responde 503.
+
+Los tokens access y refresh se entregan exclusivamente en cookies HttpOnly con `SameSite=Lax`. Las solicitudes mutables autenticadas deben copiar el valor de `csrf_access_token` al header `X-CSRF-TOKEN`; `/api/auth/refresh` usa `csrf_refresh_token`. Puede crear tablas con `flask --app app init-db`, `python scripts/init_db.py` o aplicar exactamente `migrations/001_auth.sql` mediante `python scripts/apply_auth_migration.py`.
 
 ## Docker
 
@@ -22,11 +33,65 @@ docker build -t lobostats-api .
 docker run --rm -p 5000:5000 lobostats-api
 ```
 
+## Publicación en Linux
+
+El backend permanece en Flask y se sirve con Gunicorn detrás de Nginx. El script `scripts/deploy_flask.sh` crea releases atómicos, ejecuta pruebas, aplica migraciones opcionales, configura systemd/Nginx/Cloudflare Tunnel y revierte el symlink si el health check falla.
+Antes de promover el release también valida la configuración, la conexión MySQL y la presencia de las tablas de autenticación usando la cuenta CRUD del servicio.
+
+Prepare una sola vez los archivos de servidor, fuera del repositorio:
+
+```bash
+sudo mkdir -p /etc/lobostats
+sudo cp deploy/backend.env.example /etc/lobostats/lobostats-api.env
+sudo cp deploy/migration.env.example /etc/lobostats/lobostats-api.migration.env
+sudo chmod 640 /etc/lobostats/lobostats-api*.env
+```
+
+Edite `lobostats-api.env` con la cuenta CRUD de la aplicación. Use `JWT_COOKIE_SECURE=true`, el origen HTTPS exacto del frontend en `CORS_ORIGINS` y contraseñas URL-encoded dentro de `DATABASE_URL`. El archivo `lobostats-api.migration.env` debe contener una cuenta DDL separada y solo se lee durante el despliegue; puede omitirse cuando no hay migraciones.
+
+El archivo global `/opt/devops-scripts/.env` debe contener:
+
+```bash
+CF_API_TOKEN=...
+CF_ZONE_ID=...
+DOMAIN=example.com
+TUNNEL_ID=...
+```
+
+Ejecute desde una copia del repositorio o descargue únicamente el script:
+
+```bash
+bash scripts/deploy_flask.sh
+```
+
+Valores recomendados al responder:
+
+```text
+App: lobostats-api
+Rama: main
+Puerto: 6100
+WSGI: app:app
+```
+
+Comandos operativos:
+
+```bash
+sudo systemctl status lobostats-api
+sudo journalctl -u lobostats-api -f
+curl http://127.0.0.1:6100/api/health
+```
+
+Gunicorn usa un worker `gthread` con cuatro threads. Esto es intencional: los datasets del MVP viven en memoria y no se comparten entre procesos. Antes de aumentar `--workers`, mueva `DatasetStore` a Redis, base de datos u otro almacenamiento compartido.
+
 ## API
 
 | Método | Ruta | Uso |
 |---|---|---|
 | GET | `/api/health` | Estado del servicio |
+| POST | `/api/auth/register` | Registra una cuenta institucional y envía el código |
+| POST | `/api/auth/verify`, `/resend-code` | Verifica el correo o reenvía el código |
+| POST | `/api/auth/login`, `/refresh`, `/logout` | Administra la sesión en cookies |
+| GET | `/api/auth/me` | Obtiene el usuario autenticado |
 | POST | `/api/data/upload` | Carga CSV, TSV, XLS, XLSX o JSON mediante multipart `file` |
 | POST | `/api/data/manual` | Crea dataset con `{name, columns, rows}` |
 | GET | `/api/data/{dataset_id}` | Obtiene filas paginadas con `page` y `page_size` |
@@ -138,6 +203,8 @@ El ajuste usa MLE. Cuando todos los datos son positivos, `lognormal`, `weibull`,
 
 ```powershell
 python -m pytest -q
+python -m compileall -q .
+python -m pip check
 ```
 
 El archivo `sample_data/iris.csv` permite probar rápidamente la carga multipart.

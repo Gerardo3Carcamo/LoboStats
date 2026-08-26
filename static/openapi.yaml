@@ -5,9 +5,12 @@ info:
   description: API estadística MVP con almacenamiento temporal en memoria.
 servers:
   - url: /
+security:
+  - cookieAuth: []
 paths:
   /api/health:
     get:
+      security: []
       summary: Comprueba el estado del servicio
       responses:
         '200':
@@ -16,6 +19,79 @@ paths:
             application/json:
               schema:
                 type: object
+  /api/auth/register:
+    post:
+      security: []
+      summary: Registra una cuenta institucional y envía un código de seis dígitos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisterRequest'}
+      responses:
+        '201': {description: Registro pendiente de verificación}
+        '400': {description: Datos, dominio o contraseña inválidos}
+        '409': {description: Correo ya registrado}
+  /api/auth/verify:
+    post:
+      security: []
+      summary: Verifica el correo con el código recibido
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/VerifyRequest'}
+      responses:
+        '200': {description: Correo verificado}
+        '400': {description: Código inválido, vencido o sin intentos}
+  /api/auth/resend-code:
+    post:
+      security: []
+      summary: Reenvía un código tras el periodo mínimo de 60 segundos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties: {email: {type: string, format: email}}
+      responses:
+        '200': {description: Respuesta neutral sobre el envío}
+        '429': {description: Reenvío solicitado demasiado pronto}
+  /api/auth/login:
+    post:
+      security: []
+      summary: Inicia sesión y establece cookies access/refresh y CSRF
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/LoginRequest'}
+      responses:
+        '200': {description: Sesión iniciada; cookies JWT HttpOnly SameSite=Lax}
+        '401': {description: Credenciales inválidas}
+  /api/auth/refresh:
+    post:
+      summary: Renueva la cookie access usando refresh y su token CSRF
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200': {description: Cookie access renovada}
+        '401': {description: Refresh ausente o inválido}
+  /api/auth/logout:
+    post:
+      summary: Elimina las cookies de sesión
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200': {description: Sesión cerrada}
+  /api/auth/me:
+    get:
+      summary: Devuelve el usuario autenticado
+      responses:
+        '200': {description: Perfil del usuario}
+        '401': {description: Sesión ausente o inválida}
   /api/data/upload:
     post:
       summary: Carga un archivo de datos
@@ -262,13 +338,43 @@ paths:
   /api/charts/scatter-3d:
     post: *statisticalPost
 components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: access_token_cookie
   parameters:
+    CsrfToken:
+      name: X-CSRF-TOKEN
+      in: header
+      required: true
+      schema: {type: string}
+      description: Valor de la cookie CSRF correspondiente al JWT usado.
     DatasetId:
       name: dataset_id
       in: path
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    RegisterRequest:
+      type: object
+      required: [full_name, email, password]
+      properties:
+        full_name: {type: string, maxLength: 150}
+        email: {type: string, format: email, pattern: '@uadec\\.edu\\.mx$'}
+        password: {type: string, format: password, minLength: 12}
+    VerifyRequest:
+      type: object
+      required: [email, code]
+      properties:
+        email: {type: string, format: email}
+        code: {type: string, pattern: '^\\d{6}$'}
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, format: password}
     ManualDataset:
       type: object
       required: [name, columns, rows]

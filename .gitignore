@@ -6,6 +6,10 @@ htmlcov/
 .venv/
 venv/
 .env
+.env.*
+!.env.example
+deploy/*.env
+!deploy/*.env.example
 dist/
 build/
 *.egg-info/

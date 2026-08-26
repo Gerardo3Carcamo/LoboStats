@@ -5,7 +5,12 @@ from api import create_app
 
 @pytest.fixture()
 def app():
-    return create_app({"TESTING": True})
+    return create_app({
+        "TESTING": True,
+        "AUTH_DISABLED": True,
+        "SQLALCHEMY_DATABASE_URI": "sqlite:///:memory:",
+        "AUTH_CONFIG_MISSING": [],
+    })
 
 
 @pytest.fixture()
