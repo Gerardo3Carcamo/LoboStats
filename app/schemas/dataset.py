@@ -39,6 +39,8 @@ class DatasetRead(DatasetPayload):
     id: int
     owner_email: str
     row_count: int
+    revision: int
+    content_sha256: str
     created_at: datetime
     updated_at: datetime
 

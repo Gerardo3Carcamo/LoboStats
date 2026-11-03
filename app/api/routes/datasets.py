@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.security import get_current_email
 from app.models.dataset import Dataset
 from app.schemas.dataset import DatasetCreate, DatasetRead, DatasetSummary, DatasetUpdate
+from app.services.dataset_content import dataset_content_sha256
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 Database = Annotated[AsyncSession, Depends(get_db)]
@@ -15,6 +16,9 @@ CurrentEmail = Annotated[str, Depends(get_current_email)]
 
 
 def serialize_dataset(dataset: Dataset) -> DatasetRead:
+    content_sha256 = dataset.content_sha256 or dataset_content_sha256(
+        dataset.columns_data, dataset.rows_data
+    )
     return DatasetRead(
         id=dataset.id,
         owner_email=dataset.owner_email,
@@ -22,6 +26,8 @@ def serialize_dataset(dataset: Dataset) -> DatasetRead:
         columns=dataset.columns_data,
         rows=dataset.rows_data,
         row_count=dataset.row_count,
+        revision=dataset.revision,
+        content_sha256=content_sha256,
         created_at=dataset.created_at,
         updated_at=dataset.updated_at,
     )
@@ -40,9 +46,7 @@ async def owned_dataset(db: AsyncSession, dataset_id: int, email: str) -> Datase
 async def list_datasets(db: Database, email: CurrentEmail) -> list[DatasetSummary]:
     datasets = (
         await db.scalars(
-            select(Dataset)
-            .where(Dataset.owner_email == email)
-            .order_by(Dataset.updated_at.desc())
+            select(Dataset).where(Dataset.owner_email == email).order_by(Dataset.updated_at.desc())
         )
     ).all()
     return [
@@ -59,12 +63,15 @@ async def list_datasets(db: Database, email: CurrentEmail) -> list[DatasetSummar
 
 @router.post("", response_model=DatasetRead, status_code=status.HTTP_201_CREATED)
 async def create_dataset(payload: DatasetCreate, db: Database, email: CurrentEmail) -> DatasetRead:
+    columns = [column.model_dump() for column in payload.columns]
     dataset = Dataset(
         owner_email=email,
         name=payload.name,
-        columns_data=[column.model_dump() for column in payload.columns],
+        columns_data=columns,
         rows_data=payload.rows,
         row_count=len(payload.rows),
+        revision=1,
+        content_sha256=dataset_content_sha256(columns, payload.rows),
     )
     db.add(dataset)
     await db.commit()
@@ -83,9 +90,12 @@ async def update_dataset(
 ) -> DatasetRead:
     dataset = await owned_dataset(db, dataset_id, email)
     dataset.name = payload.name
-    dataset.columns_data = [column.model_dump() for column in payload.columns]
+    columns = [column.model_dump() for column in payload.columns]
+    dataset.columns_data = columns
     dataset.rows_data = payload.rows
     dataset.row_count = len(payload.rows)
+    dataset.revision += 1
+    dataset.content_sha256 = dataset_content_sha256(columns, payload.rows)
     await db.commit()
     await db.refresh(dataset)
     return serialize_dataset(dataset)

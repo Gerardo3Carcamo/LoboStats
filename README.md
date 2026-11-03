@@ -17,6 +17,24 @@ uvicorn app.main:app --reload
 
 La documentacion OpenAPI queda disponible en `http://localhost:8000/docs`.
 
+## Estadística descriptiva
+
+Cada dataset conserva una revisión y un hash de contenido. Los análisis quedan
+vinculados a ambos valores para advertir cuando un resultado corresponde a una
+versión anterior de la hoja.
+
+```http
+POST /api/v1/datasets/{dataset_id}/analyses/descriptive
+GET  /api/v1/datasets/{dataset_id}/analyses
+GET  /api/v1/analyses/{analysis_id}
+```
+
+El análisis admite columnas numéricas, de texto y fecha, separación por una
+variable, percentiles, nivel de confianza y número de intervalos del histograma.
+La respuesta incluye tablas, frecuencias, histograma, resumen de caja, puntos
+Q-Q, advertencias y reglas de interpretación. La varianza y desviación estándar
+usan el estimador muestral.
+
 En `development`, `X-User-Email` permite simular una cuenta institucional y solo acepta el dominio configurado. En produccion el API permanece cerrado hasta conectar el verificador OIDC de Google Workspace; no se debe habilitar el modo de desarrollo publicamente.
 
 ## Pruebas
