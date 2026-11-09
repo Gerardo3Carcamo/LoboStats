@@ -65,6 +65,11 @@ El script rechaza explícitamente su ejecución completa como `root`. Solo las o
 administrativas internas utilizan `sudo`, y el entorno virtual siempre se vuelve a crear con el
 usuario del runner.
 
+No inicies Uvicorn con `nohup`, desde una terminal, cron u otra unidad. El script detiene primero
+la unidad administrada y exige que el puerto quede libre; si detecta otro proceso, muestra su PID
+y aborta antes de borrar el entorno virtual. La unidad limita también los reinicios fallidos para
+evitar ciclos continuos cuando existe un conflicto.
+
 ## 4. GitHub
 
 Crea o reutiliza el environment **production**. Si deseas aprobación manual, configura un

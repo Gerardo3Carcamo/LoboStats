@@ -105,7 +105,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           test -r "$GITHUB_WORKSPACE/$DEPLOY_SCRIPT"
-          for command in git rsync python3 curl jq systemctl; do
+          for command in git rsync python3 curl jq systemctl ss; do
             command -v "$command" >/dev/null || {
               echo "Missing command on deployment runner: $command" >&2
               exit 1

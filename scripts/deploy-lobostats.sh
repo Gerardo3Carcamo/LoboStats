@@ -32,7 +32,7 @@ if [[ ! "$UVICORN_MODULE" =~ ^[A-Za-z0-9_.]+:[A-Za-z0-9_]+$ ]]; then
   exit 1
 fi
 
-for command in git rsync python3 curl systemctl; do
+for command in git rsync python3 curl systemctl ss; do
   command -v "$command" >/dev/null || {
     echo "❌ Falta instalar: $command"
     exit 1
@@ -106,6 +106,22 @@ sudo rsync -a --delete \
 
 echo "🐍 Creando entorno virtual..."
 
+# Stop the managed unit even when it is activating or already in a restart loop.
+if sudo systemctl cat "$APP_NAME.service" >/dev/null 2>&1; then
+  echo "⏹️ Deteniendo servicio anterior..."
+  sudo systemctl stop "$APP_NAME"
+fi
+
+# A listener at this point is not managed by this deployment unit. Refuse to
+# hide the collision behind a health check from the wrong application.
+PORT_LISTENER="$(sudo ss -H -ltnp "sport = :$PORT" || true)"
+if [[ -n "$PORT_LISTENER" ]]; then
+  echo "❌ El puerto $PORT sigue ocupado por un proceso ajeno a $APP_NAME:"
+  echo "$PORT_LISTENER"
+  echo "Elimina su mecanismo de arranque antes de volver a desplegar."
+  exit 1
+fi
+
 # A previous deployment may have created the environment as root. Removing it
 # through sudo is safe here because VENV_DIR is derived from the validated app name.
 sudo rm -rf -- "$VENV_DIR"
@@ -129,6 +145,8 @@ sudo tee "$SERVICE_FILE" >/dev/null <<EOF
 Description=LoboStats FastAPI Backend
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -140,6 +158,8 @@ ExecStartPre=$VENV_DIR/bin/alembic upgrade head
 ExecStart=$VENV_DIR/bin/uvicorn $UVICORN_MODULE --host 127.0.0.1 --port $PORT
 Restart=always
 RestartSec=5
+KillMode=control-group
+TimeoutStopSec=30
 NoNewPrivileges=true
 PrivateTmp=true
 
@@ -148,6 +168,7 @@ WantedBy=multi-user.target
 EOF
 
 sudo systemctl daemon-reload
+sudo systemctl reset-failed "$APP_NAME" || true
 sudo systemctl enable "$APP_NAME"
 sudo systemctl restart "$APP_NAME"
 
