@@ -4,8 +4,8 @@ El workflow `.github/workflows/backend-ci-cd.yml` contiene dos trabajos:
 
 1. **Lint, test and build** usa Python 3.11, valida Ruff, aplica todas las migraciones sobre una
    base SQLite vacía, ejecuta las pruebas y construye el wheel.
-2. **Deploy to Raspberry Pi 5** se ejecuta después del CI para `develop-tesis` y llama a
-   `/opt/devops-scripts/Python/deploy-lobostats.sh`.
+2. **Deploy to Raspberry Pi 5** se ejecuta después del CI para `develop-tesis` y llama al script
+   versionado `scripts/deploy-lobostats.sh`.
 
 El job entrega al script un repositorio Git local con exactamente `${GITHUB_SHA}`. No requiere
 una deploy key permanente ni expone credenciales del repositorio.
@@ -48,7 +48,7 @@ producción.
 Prueba el script con el mismo usuario del servicio del runner:
 
 ```bash
-bash /opt/devops-scripts/Python/deploy-lobostats.sh \
+bash scripts/deploy-lobostats.sh \
   lobostats-api \
   /ruta/a/un/clone-local-de-LoboStats \
   6100 \
@@ -61,11 +61,9 @@ GitHub Actions no puede responder una contraseña de `sudo`. Concede solamente l
 administrativos necesarios para Nginx, systemd y los directorios de despliegue. No ejecutes el
 runner como `root` ni configures `NOPASSWD: ALL`.
 
-El script debe ser legible por el usuario del runner:
-
-```bash
-chmod 750 /opt/devops-scripts/Python/deploy-lobostats.sh
-```
+El script rechaza explícitamente su ejecución completa como `root`. Solo las operaciones
+administrativas internas utilizan `sudo`, y el entorno virtual siempre se vuelve a crear con el
+usuario del runner.
 
 ## 4. GitHub
 
