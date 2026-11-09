@@ -11,8 +11,9 @@ from scipy import stats
 from app.models.dataset import Dataset
 from app.schemas.analysis import DescriptiveAnalysisRequest
 
-ENGINE_VERSION = "descriptive-1.0"
+ENGINE_VERSION = "descriptive-2.0"
 MAX_QQ_POINTS = 200
+MAX_ECDF_POINTS = 200
 
 
 class DescriptiveAnalysisError(ValueError):
@@ -33,13 +34,14 @@ def analyze_descriptive(
     groups = _group_rows(dataset.rows_data, request.group_by)
     warnings: list[str] = []
     group_results = []
-    for group_value, rows in groups:
+    for group_value, rows, source_row_numbers in groups:
         analyzed_columns = []
         for key in request.columns:
             column = columns[key]
             result, column_warnings = _analyze_column(
                 column=column,
                 rows=rows,
+                source_row_numbers=source_row_numbers,
                 confidence_level=request.confidence_level,
                 percentiles=request.percentiles,
                 histogram_bins=request.histogram_bins,
@@ -77,10 +79,15 @@ def analyze_descriptive(
                 "frequency_limit": request.frequency_limit,
             },
             "groups": group_results,
+            "missingness": _missingness_summary(dataset.rows_data, request.columns, columns),
             "guidance": [
                 "Los cálculos numéricos excluyen valores faltantes y reportan cuántas "
                 "observaciones se utilizaron.",
                 "La desviación estándar y la varianza usan el estimador muestral (n - 1).",
+                "Anderson–Darling se interpreta junto con la gráfica Q–Q; no rechazar la "
+                "normalidad no demuestra que los datos sean normales.",
+                "Los atípicos se señalan con los límites de Tukey (1.5 × IQR) para revisión, "
+                "no para eliminación automática.",
                 "Una descripción resume la muestra; no demuestra causalidad ni "
                 "significancia estadística.",
             ],
@@ -91,22 +98,24 @@ def analyze_descriptive(
 
 def _group_rows(
     rows: list[dict[str, Any]], group_by: str | None
-) -> list[tuple[Any, list[dict[str, Any]]]]:
+) -> list[tuple[Any, list[dict[str, Any]], list[int]]]:
     if not group_by:
-        return [(None, rows)]
-    grouped: dict[tuple[str, str], tuple[Any, list[dict[str, Any]]]] = {}
-    for row in rows:
+        return [(None, rows, list(range(1, len(rows) + 1)))]
+    grouped: dict[tuple[str, str], tuple[Any, list[dict[str, Any]], list[int]]] = {}
+    for row_number, row in enumerate(rows, start=1):
         value = row.get(group_by)
         identity = (type(value).__name__, repr(value))
         if identity not in grouped:
-            grouped[identity] = (value, [])
+            grouped[identity] = (value, [], [])
         grouped[identity][1].append(row)
+        grouped[identity][2].append(row_number)
     return sorted(grouped.values(), key=lambda item: (item[0] is None, str(item[0]).casefold()))
 
 
 def _analyze_column(
     column: dict[str, Any],
     rows: list[dict[str, Any]],
+    source_row_numbers: list[int],
     confidence_level: float,
     percentiles: list[float],
     histogram_bins: int,
@@ -121,14 +130,24 @@ def _analyze_column(
         "total_count": len(values),
         "valid_count": len(present),
         "missing_count": len(values) - len(present),
+        "missing_percentage": ((len(values) - len(present)) / len(values) * 100) if values else 0,
     }
     if column["data_type"] == "number":
-        numeric, rejected = _numeric_values(present)
-        summary, warnings = _numeric_summary(numeric, confidence_level, percentiles, histogram_bins)
+        numeric, row_numbers, rejected = _numeric_values(values, source_row_numbers)
+        summary, warnings = _numeric_summary(
+            numeric,
+            row_numbers,
+            confidence_level,
+            percentiles,
+            histogram_bins,
+        )
         if rejected:
             warnings.append(f"se excluyeron {rejected} valores no numéricos o no finitos")
         base["valid_count"] = len(numeric)
         base["missing_count"] = len(values) - len(numeric)
+        base["missing_percentage"] = (
+            (len(values) - len(numeric)) / len(values) * 100 if values else 0
+        )
         return {**base, "numeric": summary, "categorical": None, "date": None}, warnings
     if column["data_type"] == "date":
         return {
@@ -145,10 +164,15 @@ def _analyze_column(
     }, []
 
 
-def _numeric_values(values: list[Any]) -> tuple[list[float], int]:
+def _numeric_values(
+    values: list[Any], source_row_numbers: list[int]
+) -> tuple[list[float], list[int], int]:
     numeric: list[float] = []
+    row_numbers: list[int] = []
     rejected = 0
-    for value in values:
+    for value, row_number in zip(values, source_row_numbers, strict=True):
+        if _is_missing(value):
+            continue
         if isinstance(value, bool):
             rejected += 1
             continue
@@ -161,11 +185,13 @@ def _numeric_values(values: list[Any]) -> tuple[list[float], int]:
             rejected += 1
             continue
         numeric.append(parsed)
-    return numeric, rejected
+        row_numbers.append(row_number)
+    return numeric, row_numbers, rejected
 
 
 def _numeric_summary(
     values: list[float],
+    row_numbers: list[int],
     confidence_level: float,
     percentiles: list[float],
     histogram_bins: int,
@@ -189,6 +215,8 @@ def _numeric_summary(
     if mode_count == 1:
         modes = []
     confidence_interval = _mean_confidence_interval(mean, std_error, count, confidence_level)
+    median_interval = _median_confidence_interval(ordered, confidence_level)
+    std_dev_interval = _std_dev_confidence_interval(variance, count, confidence_level)
     skewness = _finite_or_none(stats.skew(array, bias=False)) if count >= 3 else None
     kurtosis = (
         _finite_or_none(stats.kurtosis(array, fisher=True, bias=False)) if count >= 4 else None
@@ -198,6 +226,13 @@ def _numeric_summary(
     upper_fence = q3 + 1.5 * iqr
     inside = [value for value in ordered if lower_fence <= value <= upper_fence]
     qq = _qq_points(array)
+    normality = _anderson_darling_normality(array)
+    ecdf = _ecdf_points(array)
+    outlier_details = [
+        {"row": row_number, "value": value}
+        for value, row_number in zip(values, row_numbers, strict=True)
+        if value < lower_fence or value > upper_fence
+    ][:200]
     warnings = []
     if count == 1:
         warnings.append("la varianza, la desviación y el intervalo requieren al menos 2 valores")
@@ -208,6 +243,9 @@ def _numeric_summary(
     return {
         "mean": mean,
         "median": median,
+        "trimmed_mean": float(stats.trim_mean(array, proportiontocut=0.1)),
+        "mad": float(stats.median_abs_deviation(array, scale=1)),
+        "geometric_mean": float(stats.gmean(array)) if np.all(array > 0) else None,
         "modes": modes,
         "mode_frequency": mode_count if modes else None,
         "variance": variance,
@@ -231,6 +269,9 @@ def _numeric_summary(
             for percentile in percentiles
         },
         "confidence_interval_mean": confidence_interval,
+        "confidence_interval_median": median_interval,
+        "confidence_interval_std_dev": std_dev_interval,
+        "normality": normality,
         "histogram": {
             "counts": [int(value) for value in counts],
             "edges": [float(value) for value in edges],
@@ -244,8 +285,10 @@ def _numeric_summary(
             "outliers": [value for value in ordered if value < lower_fence or value > upper_fence][
                 :200
             ],
+            "outlier_details": outlier_details,
         },
         "qq_plot": qq,
+        "ecdf": ecdf,
     }, warnings
 
 
@@ -259,6 +302,38 @@ def _mean_confidence_interval(
     critical = float(stats.t.ppf((1 + confidence_level) / 2, count - 1))
     margin = critical * std_error
     return {"level": confidence_level, "lower": mean - margin, "upper": mean + margin}
+
+
+def _median_confidence_interval(
+    ordered: list[float], confidence_level: float
+) -> dict[str, float | str] | None:
+    count = len(ordered)
+    if count < 2:
+        return None
+    alpha = 1 - confidence_level
+    lower_rank = int(stats.binom.ppf(alpha / 2, count, 0.5))
+    lower_rank = min(max(lower_rank, 0), count - 1)
+    upper_rank = count - lower_rank - 1
+    return {
+        "level": confidence_level,
+        "lower": ordered[lower_rank],
+        "upper": ordered[upper_rank],
+        "method": "binomial exacto",
+    }
+
+
+def _std_dev_confidence_interval(
+    variance: float | None, count: int, confidence_level: float
+) -> dict[str, float] | None:
+    if variance is None or count < 2:
+        return None
+    if variance == 0:
+        return {"level": confidence_level, "lower": 0.0, "upper": 0.0}
+    alpha = 1 - confidence_level
+    degrees_freedom = count - 1
+    lower = math.sqrt(degrees_freedom * variance / stats.chi2.ppf(1 - alpha / 2, degrees_freedom))
+    upper = math.sqrt(degrees_freedom * variance / stats.chi2.ppf(alpha / 2, degrees_freedom))
+    return {"level": confidence_level, "lower": lower, "upper": upper}
 
 
 def _interpolated_quantile(ordered: list[float], probability: float) -> float:
@@ -285,6 +360,83 @@ def _qq_points(array: np.ndarray) -> dict[str, list[float]]:
     return {
         "theoretical": [float(value) for value in theoretical_array],
         "observed": [float(value) for value in observed_array],
+    }
+
+
+def _ecdf_points(array: np.ndarray) -> dict[str, list[float]]:
+    values, counts = np.unique(array, return_counts=True)
+    probabilities = np.cumsum(counts) / len(array)
+    if len(values) > MAX_ECDF_POINTS:
+        indices = np.linspace(0, len(values) - 1, MAX_ECDF_POINTS, dtype=int)
+        values = values[indices]
+        probabilities = probabilities[indices]
+    return {
+        "values": [float(value) for value in values],
+        "probabilities": [float(value) for value in probabilities],
+    }
+
+
+def _anderson_darling_normality(array: np.ndarray) -> dict[str, Any] | None:
+    count = len(array)
+    if count < 3 or np.ptp(array) == 0:
+        return None
+    standardized = (np.sort(array) - np.mean(array)) / np.std(array, ddof=1)
+    cumulative = np.clip(stats.norm.cdf(standardized), 1e-15, 1 - 1e-15)
+    reversed_cumulative = cumulative[::-1]
+    weights = 2 * np.arange(1, count + 1) - 1
+    statistic = float(
+        -count - np.sum(weights * (np.log(cumulative) + np.log1p(-reversed_cumulative))) / count
+    )
+    adjusted = statistic * (1 + 0.75 / count + 2.25 / (count**2))
+    if adjusted >= 0.6:
+        p_value = math.exp(1.2937 - 5.709 * adjusted + 0.0186 * adjusted**2)
+    elif adjusted >= 0.34:
+        p_value = math.exp(0.9177 - 4.279 * adjusted - 1.38 * adjusted**2)
+    elif adjusted > 0.2:
+        p_value = 1 - math.exp(-8.318 + 42.796 * adjusted - 59.938 * adjusted**2)
+    else:
+        p_value = 1 - math.exp(-13.436 + 101.14 * adjusted - 223.73 * adjusted**2)
+    p_value = min(max(p_value, 0.0), 1.0)
+    reject = p_value < 0.05
+    return {
+        "test": "Anderson-Darling",
+        "statistic": statistic,
+        "adjusted_statistic": adjusted,
+        "p_value": p_value,
+        "alpha": 0.05,
+        "reject_normality": reject,
+        "interpretation": (
+            "Hay evidencia para cuestionar el ajuste normal."
+            if reject
+            else "No hay evidencia suficiente para rechazar el ajuste normal."
+        ),
+    }
+
+
+def _missingness_summary(
+    rows: list[dict[str, Any]],
+    requested_keys: list[str],
+    columns: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    row_count = len(rows)
+    incomplete_rows = sum(any(_is_missing(row.get(key)) for key in requested_keys) for row in rows)
+    column_summaries = []
+    for key in requested_keys:
+        missing_count = sum(_is_missing(row.get(key)) for row in rows)
+        column_summaries.append(
+            {
+                "key": key,
+                "name": columns[key]["name"],
+                "missing_count": missing_count,
+                "missing_percentage": (missing_count / row_count * 100) if row_count else 0,
+            }
+        )
+    return {
+        "row_count": row_count,
+        "complete_rows": row_count - incomplete_rows,
+        "incomplete_rows": incomplete_rows,
+        "incomplete_percentage": (incomplete_rows / row_count * 100) if row_count else 0,
+        "columns": column_summaries,
     }
 
 

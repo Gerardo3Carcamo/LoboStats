@@ -30,6 +30,31 @@ async def test_health(client: AsyncClient) -> None:
     assert response.json()["status"] == "ok"
 
 
+async def test_probability_catalog(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/probability/distributions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body) == 24
+    assert {item["key"] for item in body} >= {
+        "geometric",
+        "negative_binomial",
+        "hypergeometric",
+        "exponential",
+        "student_t",
+        "chi_square",
+        "f",
+        "uniform",
+        "integer_uniform",
+        "custom_discrete",
+        "beta",
+        "gamma",
+        "lognormal",
+        "weibull",
+        "triangular",
+    }
+
+
 async def test_dataset_lifecycle(client: AsyncClient) -> None:
     payload = {
         "name": "Calificaciones grupo A",
@@ -94,6 +119,8 @@ async def test_descriptive_analysis_lifecycle(client: AsyncClient) -> None:
     listed = await client.get(f"/api/v1/datasets/{dataset_id}/analyses")
     assert listed.status_code == 200
     assert listed.json()[0]["id"] == body["id"]
+    assert listed.json()[0]["presentation"]["module"] == "Estadística descriptiva"
+    assert listed.json()[0]["presentation"]["result"] == "1 variables · 5 observaciones"
 
     updated_payload = {
         "name": "Mediciones actualizadas",
@@ -107,6 +134,64 @@ async def test_descriptive_analysis_lifecycle(client: AsyncClient) -> None:
     previous = await client.get(f"/api/v1/analyses/{body['id']}")
     assert previous.status_code == 200
     assert previous.json()["is_stale"] is True
+
+
+async def test_probability_analysis_lifecycle(client: AsyncClient) -> None:
+    dataset = await client.post(
+        "/api/v1/datasets",
+        json={
+            "name": "Espacio de probabilidad",
+            "columns": [{"key": "value", "name": "Valor", "data_type": "number"}],
+            "rows": [],
+        },
+    )
+    dataset_id = dataset.json()["id"]
+
+    response = await client.post(
+        f"/api/v1/datasets/{dataset_id}/analyses/probability",
+        json={
+            "distribution": "binomial",
+            "operation": "at_least",
+            "trials": 12,
+            "success_probability": 0.4,
+            "lower": 6,
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["analysis_type"] == "probability"
+    assert body["result"]["probability"] == pytest.approx(0.3347914424)
+    assert body["result"]["distribution"]["label"] == "Binomial"
+    assert body["is_stale"] is False
+
+    listed = await client.get(
+        f"/api/v1/datasets/{dataset_id}/analyses",
+        params={"analysis_type": "probability", "limit": 1},
+    )
+    assert listed.status_code == 200
+    summary = listed.json()[0]
+    assert summary["distribution"] == "Binomial"
+    assert summary["mode"] == "event"
+    assert summary["formula"] == "P(X ≥ 6)"
+    assert summary["result_preview"] == pytest.approx(body["result"]["probability"])
+    assert summary["engine_version"] == "probability-4.0"
+    assert summary["presentation"]["title"] == "Binomial · Evento"
+    assert summary["presentation"]["result"] == f"{body['result']['probability'] * 100:.2f} %"
+
+    updated = await client.put(
+        f"/api/v1/datasets/{dataset_id}",
+        json={
+            "name": "Espacio actualizado",
+            "columns": dataset.json()["columns"],
+            "rows": [{"value": 1}],
+        },
+    )
+    assert updated.status_code == 200
+
+    previous = await client.get(f"/api/v1/analyses/{body['id']}")
+    assert previous.status_code == 200
+    assert previous.json()["is_stale"] is False
 
 
 async def test_rejects_non_uadec_email(client: AsyncClient) -> None:
