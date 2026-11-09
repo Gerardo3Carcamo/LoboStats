@@ -1,0 +1,184 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [develop-tesis]
+  pull_request:
+    branches: [develop-tesis]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Desplegar en la Raspberry Pi después del CI
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Lint, test and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite+aiosqlite:///./lobostats-ci.sqlite
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Check formatting and lint
+        run: |
+          ruff format --check app tests alembic
+          ruff check app tests alembic
+
+      - name: Validate migrations from an empty database
+        run: |
+          rm -f -- lobostats-ci.sqlite
+          alembic upgrade head
+          alembic current
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Build wheel
+        run: |
+          rm -rf -- dist
+          python -m pip wheel . --no-deps --wheel-dir dist
+
+      - name: Preserve verified package
+        uses: actions/upload-artifact@v4
+        with:
+          name: lobostats-api-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  deploy:
+    name: Deploy to Raspberry Pi 5
+    needs: ci
+    if: >-
+      github.ref == 'refs/heads/develop-tesis' &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy))
+    runs-on: [self-hosted, Linux, ARM64, lobostats-rpi]
+    timeout-minutes: 30
+    concurrency:
+      group: lobostats-backend-production
+      cancel-in-progress: false
+    environment:
+      name: production
+    env:
+      APP_NAME: lobostats-api
+      API_PORT: 6100
+      UVICORN_MODULE: app.main:app
+      DEPLOY_BRANCH: develop-tesis
+      PUBLIC_ORIGIN: https://lobostats.arechsolutions.com
+      DEPLOY_SCRIPT: /opt/devops-scripts/Python/deploy-lobostats.sh
+      ENV_FILE: /etc/lobostats/lobostats-api.env
+
+    steps:
+      - name: Checkout the verified commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify Raspberry Pi deployment prerequisites
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -r "$DEPLOY_SCRIPT"
+          for command in git rsync python3 curl jq systemctl; do
+            command -v "$command" >/dev/null || {
+              echo "Missing command on deployment runner: $command" >&2
+              exit 1
+            }
+          done
+          python3 -c "import sys, venv; sys.exit(0 if sys.version_info >= (3, 11) else 'Python 3.11 or newer is required')"
+          source_repo="$RUNNER_TEMP/lobostats-api-source-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.git"
+          echo "SOURCE_REPO=$source_repo" >> "$GITHUB_ENV"
+          echo "SOURCE_REPO_URL=file://$source_repo" >> "$GITHUB_ENV"
+
+      - name: Prepare an immutable local Git source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init --bare --initial-branch="$DEPLOY_BRANCH" "$SOURCE_REPO"
+          git -C "$GITHUB_WORKSPACE" push \
+            "$SOURCE_REPO" \
+            "$GITHUB_SHA:refs/heads/$DEPLOY_BRANCH"
+          deployed_sha="$(git --git-dir="$SOURCE_REPO" rev-parse "refs/heads/$DEPLOY_BRANCH")"
+          test "$deployed_sha" = "$GITHUB_SHA"
+
+      - name: Deploy verified backend
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash "$DEPLOY_SCRIPT" \
+            "$APP_NAME" \
+            "$SOURCE_REPO_URL" \
+            "$API_PORT" \
+            "$UVICORN_MODULE" \
+            "$DEPLOY_BRANCH" \
+            "$PUBLIC_ORIGIN"
+
+      - name: Require local and public health checks
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          systemctl is-active --quiet "$APP_NAME"
+
+          local_health="$(curl --fail --silent --show-error \
+            "http://127.0.0.1:$API_PORT/api/v1/health")"
+          jq -e '.status == "ok"' <<<"$local_health" >/dev/null
+
+          public_health="$(curl \
+            --fail \
+            --silent \
+            --show-error \
+            --retry 10 \
+            --retry-delay 3 \
+            --retry-all-errors \
+            "$PUBLIC_ORIGIN/api/v1/health")"
+          jq -e '.status == "ok"' <<<"$public_health" >/dev/null
+
+          {
+            echo "### Backend deployed"
+            echo
+            echo "- Health: $PUBLIC_ORIGIN/api/v1/health"
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Runner: \`$RUNNER_NAME\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show service diagnostics after a deployment failure
+        if: failure()
+        shell: bash
+        run: |
+          sudo systemctl status "$APP_NAME" --no-pager || true
+          sudo journalctl -u "$APP_NAME" -n 100 --no-pager || true
+
+      - name: Remove temporary local Git source
+        if: always()
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          if [[ -n "${SOURCE_REPO:-}" && "$SOURCE_REPO" == "$RUNNER_TEMP"/lobostats-api-source-* ]]; then
+            rm -rf -- "$SOURCE_REPO"
+          fi
