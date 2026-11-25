@@ -272,6 +272,56 @@ async def test_regression_analysis_lifecycle(client: AsyncClient) -> None:
     assert listed.json()[0]["presentation"]["filter_key"] == "linear"
 
 
+async def test_manufacturing_analysis_lifecycle(client: AsyncClient) -> None:
+    dataset = await client.post(
+        "/api/v1/datasets",
+        json={
+            "name": "Turnos de producción",
+            "columns": [
+                {"key": "planned", "name": "Programado", "data_type": "number"},
+                {"key": "operating", "name": "Operativo", "data_type": "number"},
+                {"key": "ideal", "name": "Ciclo ideal", "data_type": "number"},
+                {"key": "total", "name": "Total", "data_type": "number"},
+                {"key": "good", "name": "Buenas", "data_type": "number"},
+            ],
+            "rows": [{"planned": 480, "operating": 400, "ideal": 60, "total": 360, "good": 350}],
+        },
+    )
+    dataset_id = dataset.json()["id"]
+
+    catalog = await client.get("/api/v1/business/manufacturing/metrics")
+    assert catalog.status_code == 200
+    assert {item["key"] for item in catalog.json()} >= {"cycle", "downtime", "quality", "oee"}
+
+    response = await client.post(
+        f"/api/v1/datasets/{dataset_id}/analyses/manufacturing",
+        json={
+            "mode": "summary",
+            "mapping": {
+                "planned_time": "planned",
+                "operating_time": "operating",
+                "ideal_cycle_time": "ideal",
+                "total_count": "total",
+                "good_count": "good",
+            },
+            "time_unit": "minutes",
+            "cycle_time_unit": "seconds",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["analysis_type"] == "manufacturing"
+    assert body["result"]["oee"]["oee"] == pytest.approx((400 / 480) * (360 / 400) * (350 / 360))
+
+    listed = await client.get(
+        f"/api/v1/datasets/{dataset_id}/analyses",
+        params={"analysis_type": "manufacturing"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()[0]["presentation"]["module"] == "Analítica empresarial"
+    assert listed.json()[0]["presentation"]["filter_key"] == "summary"
+
+
 async def test_rejects_non_uadec_email(client: AsyncClient) -> None:
     response = await client.get("/api/v1/datasets", headers={"X-User-Email": "user@example.com"})
     assert response.status_code == 403

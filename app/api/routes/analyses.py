@@ -200,6 +200,8 @@ def summary_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
         return hypothesis_presentation(run)
     if run.analysis_type == "regression":
         return regression_presentation(run)
+    if run.analysis_type == "manufacturing":
+        return manufacturing_presentation(run)
     return AnalysisRunPresentation(
         module=run.analysis_type.replace("_", " ").title(),
         title=f"Análisis #{run.id}",
@@ -314,6 +316,34 @@ def regression_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
         result=preview,
         filter_key=model.get("key", "regression"),
         filter_label=model.get("label", "Regresión"),
+        tags=[f"Revisión {run.dataset_revision}", run.engine_version],
+    )
+
+
+def manufacturing_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
+    result = run.result_data or {}
+    scope = result.get("scope") or {}
+    oee = result.get("oee") or {}
+    cycle = result.get("cycle") or {}
+    if oee.get("oee") is not None:
+        preview = f"OEE {float(oee['oee']) * 100:.1f} %"
+    elif cycle.get("mean_minutes") is not None:
+        preview = f"Ciclo medio {float(cycle['mean_minutes']):.2f} min"
+    else:
+        preview = f"{scope.get('analyzed_rows', 0)} registros"
+    mode_labels = {
+        "summary": "Resumen por turno",
+        "event_log": "Bitácora de eventos",
+        "cycle_log": "Registro de ciclos",
+    }
+    mode = scope.get("mode", "manufacturing")
+    return AnalysisRunPresentation(
+        module="Analítica empresarial",
+        title="Planta manufacturera",
+        detail=mode_labels.get(mode, mode),
+        result=preview,
+        filter_key=mode,
+        filter_label=mode_labels.get(mode, "Manufactura"),
         tags=[f"Revisión {run.dataset_revision}", run.engine_version],
     )
 

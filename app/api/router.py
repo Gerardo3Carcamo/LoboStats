@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.routes import analyses, datasets, hypothesis, regression, system
+from app.api.routes import analyses, datasets, hypothesis, manufacturing, regression, system
 
 api_router = APIRouter()
 api_router.include_router(system.router)
@@ -8,3 +8,4 @@ api_router.include_router(datasets.router)
 api_router.include_router(analyses.router)
 api_router.include_router(hypothesis.router)
 api_router.include_router(regression.router)
+api_router.include_router(manufacturing.router)

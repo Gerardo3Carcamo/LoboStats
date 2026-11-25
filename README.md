@@ -84,6 +84,18 @@ GET  /api/v1/regression/models
 POST /api/v1/datasets/{dataset_id}/analyses/regression
 ```
 
+## Analítica empresarial para manufactura
+
+La primera solución empresarial interpreta resúmenes por turno, bitácoras de
+eventos y registros de ciclos. Calcula tiempos de ciclo, takt, throughput,
+Pareto de paros, MTBF, MTTR, FPY, scrap, retrabajo, DPMO, capacidad y OEE sin
+rellenar métricas cuyos datos obligatorios no estén disponibles.
+
+```http
+GET  /api/v1/business/manufacturing/metrics
+POST /api/v1/datasets/{dataset_id}/analyses/manufacturing
+```
+
 En `development`, `X-User-Email` permite simular una cuenta institucional y solo acepta el dominio configurado. En produccion el API permanece cerrado hasta conectar el verificador OIDC de Google Workspace; no se debe habilitar el modo de desarrollo publicamente.
 
 ## Pruebas
