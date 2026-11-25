@@ -194,6 +194,46 @@ async def test_probability_analysis_lifecycle(client: AsyncClient) -> None:
     assert previous.json()["is_stale"] is False
 
 
+async def test_hypothesis_analysis_lifecycle(client: AsyncClient) -> None:
+    dataset = await client.post(
+        "/api/v1/datasets",
+        json={
+            "name": "Contraste de medias",
+            "columns": [{"key": "value", "name": "Valor", "data_type": "number"}],
+            "rows": [{"value": value} for value in [18, 19, 20, 21, 22, 24]],
+        },
+    )
+    dataset_id = dataset.json()["id"]
+
+    catalog = await client.get("/api/v1/hypothesis/tests")
+    assert catalog.status_code == 200
+    assert {item["key"] for item in catalog.json()} >= {"one_sample_t", "mann_whitney"}
+
+    response = await client.post(
+        f"/api/v1/datasets/{dataset_id}/analyses/hypothesis",
+        json={
+            "test": "one_sample_t",
+            "column": "value",
+            "hypothesized_value": 20,
+            "alternative": "two_sided",
+            "confidence_level": 0.95,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["analysis_type"] == "hypothesis"
+    assert body["result"]["test"]["label"] == "t de una muestra"
+    assert body["result"]["result"]["p_value"] == pytest.approx(0.48376, rel=1e-3)
+
+    listed = await client.get(
+        f"/api/v1/datasets/{dataset_id}/analyses",
+        params={"analysis_type": "hypothesis"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()[0]["presentation"]["module"] == "Pruebas de hipótesis"
+    assert listed.json()[0]["presentation"]["filter_key"] == "one_sample_t"
+
+
 async def test_rejects_non_uadec_email(client: AsyncClient) -> None:
     response = await client.get("/api/v1/datasets", headers={"X-User-Email": "user@example.com"})
     assert response.status_code == 403

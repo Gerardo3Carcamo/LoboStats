@@ -196,6 +196,8 @@ def summary_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
         return probability_presentation(run)
     if run.analysis_type == "descriptive":
         return descriptive_presentation(run)
+    if run.analysis_type == "hypothesis":
+        return hypothesis_presentation(run)
     return AnalysisRunPresentation(
         module=run.analysis_type.replace("_", " ").title(),
         title=f"Análisis #{run.id}",
@@ -261,6 +263,32 @@ def descriptive_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
         filter_key="grouped" if group_by else "general",
         filter_label="Agrupado" if group_by else "General",
         tags=tags,
+    )
+
+
+def hypothesis_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
+    result = run.result_data or {}
+    test = result.get("test") or {}
+    test_result = result.get("result") or {}
+    decision = result.get("decision")
+    p_value = test_result.get("p_value")
+    if p_value is None:
+        preview = "Sin decisión"
+    else:
+        preview = f"p = {float(p_value):.4g}"
+    decision_label = {
+        "reject": "Se rechaza H₀",
+        "fail_to_reject": "No se rechaza H₀",
+    }.get(decision, "Resultado disponible")
+    key = test.get("key", "hypothesis")
+    return AnalysisRunPresentation(
+        module="Pruebas de hipótesis",
+        title=test.get("label", f"Análisis #{run.id}"),
+        detail=result.get("method", "Contraste estadístico"),
+        result=f"{decision_label} · {preview}",
+        filter_key=key,
+        filter_label=test.get("label", "Hipótesis"),
+        tags=[f"Revisión {run.dataset_revision}", run.engine_version],
     )
 
 

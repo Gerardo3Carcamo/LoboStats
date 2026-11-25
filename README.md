@@ -54,6 +54,23 @@ POST /api/v1/datasets/{dataset_id}/analyses/probability
 Los cálculos se vinculan al espacio activo para conservar historial y
 propiedad, pero no se vuelven obsoletos cuando cambia el contenido de la hoja.
 
+## Pruebas de hipótesis
+
+El módulo de hipótesis toma como referencia el catálogo clásico de Minitab 15 e
+incluye contrastes de medias, proporciones, tasas Poisson, varianzas,
+correlación, normalidad, asociación, ajuste, aleatoriedad y pruebas no
+paramétricas. Cada ejecución conserva H₀, H₁, método, estadístico, p-value,
+intervalo, advertencias y la revisión exacta del dataset.
+
+```http
+GET  /api/v1/hypothesis/tests
+POST /api/v1/datasets/{dataset_id}/analyses/hypothesis
+```
+
+Los métodos Ryan–Joiner y Kolmogórov–Smirnov informan explícitamente sus
+limitaciones de paridad cuando se seleccionan, porque sus p-values pueden variar
+respecto a los algoritmos internos de Minitab 15.
+
 En `development`, `X-User-Email` permite simular una cuenta institucional y solo acepta el dominio configurado. En produccion el API permanece cerrado hasta conectar el verificador OIDC de Google Workspace; no se debe habilitar el modo de desarrollo publicamente.
 
 ## Pruebas
