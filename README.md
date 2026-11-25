@@ -71,6 +71,19 @@ Los métodos Ryan–Joiner y Kolmogórov–Smirnov informan explícitamente sus
 limitaciones de paridad cuando se seleccionan, porque sus p-values pueden variar
 respecto a los algoritmos internos de Minitab 15.
 
+## Regresión
+
+El módulo de regresión cubre el catálogo confirmado de Minitab 15: modelos
+lineales y polinomiales, selección escalonada, mejores subconjuntos, mínimos
+cuadrados parciales y regresión logística binaria, ordinal y nominal. Los
+resultados incluyen ecuación, coeficientes, ajuste, predicciones, residuos,
+influencia, multicolinealidad y advertencias de convergencia.
+
+```http
+GET  /api/v1/regression/models
+POST /api/v1/datasets/{dataset_id}/analyses/regression
+```
+
 En `development`, `X-User-Email` permite simular una cuenta institucional y solo acepta el dominio configurado. En produccion el API permanece cerrado hasta conectar el verificador OIDC de Google Workspace; no se debe habilitar el modo de desarrollo publicamente.
 
 ## Pruebas

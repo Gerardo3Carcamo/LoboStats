@@ -198,6 +198,8 @@ def summary_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
         return descriptive_presentation(run)
     if run.analysis_type == "hypothesis":
         return hypothesis_presentation(run)
+    if run.analysis_type == "regression":
+        return regression_presentation(run)
     return AnalysisRunPresentation(
         module=run.analysis_type.replace("_", " ").title(),
         title=f"Análisis #{run.id}",
@@ -288,6 +290,30 @@ def hypothesis_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
         result=f"{decision_label} · {preview}",
         filter_key=key,
         filter_label=test.get("label", "Hipótesis"),
+        tags=[f"Revisión {run.dataset_revision}", run.engine_version],
+    )
+
+
+def regression_presentation(run: AnalysisRun) -> AnalysisRunPresentation:
+    result = run.result_data or {}
+    model = result.get("model") or {}
+    fit = result.get("fit") or {}
+    r_squared = fit.get("r_squared")
+    accuracy = fit.get("accuracy")
+    if r_squared is not None:
+        preview = f"R² = {float(r_squared):.3f}"
+    elif accuracy is not None:
+        preview = f"Exactitud = {float(accuracy) * 100:.1f} %"
+    else:
+        preview = f"n = {fit.get('n', 0)}"
+    predictors = model.get("predictors") or []
+    return AnalysisRunPresentation(
+        module="Regresión",
+        title=model.get("label", f"Modelo #{run.id}"),
+        detail=result.get("equation", ", ".join(predictors)),
+        result=preview,
+        filter_key=model.get("key", "regression"),
+        filter_label=model.get("label", "Regresión"),
         tags=[f"Revisión {run.dataset_revision}", run.engine_version],
     )
 

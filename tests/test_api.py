@@ -234,6 +234,44 @@ async def test_hypothesis_analysis_lifecycle(client: AsyncClient) -> None:
     assert listed.json()[0]["presentation"]["filter_key"] == "one_sample_t"
 
 
+async def test_regression_analysis_lifecycle(client: AsyncClient) -> None:
+    rows = [{"y": 3 + 2 * value, "x": value} for value in range(1, 21)]
+    dataset = await client.post(
+        "/api/v1/datasets",
+        json={
+            "name": "Modelo lineal",
+            "columns": [
+                {"key": "y", "name": "Respuesta", "data_type": "number"},
+                {"key": "x", "name": "Predictor", "data_type": "number"},
+            ],
+            "rows": rows,
+        },
+    )
+    dataset_id = dataset.json()["id"]
+
+    catalog = await client.get("/api/v1/regression/models")
+    assert catalog.status_code == 200
+    assert {item["key"] for item in catalog.json()} >= {"linear", "binary_logistic", "pls"}
+
+    response = await client.post(
+        f"/api/v1/datasets/{dataset_id}/analyses/regression",
+        json={"model": "linear", "response": "y", "predictors": ["x"]},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["analysis_type"] == "regression"
+    assert body["result"]["fit"]["r_squared"] == pytest.approx(1)
+    assert body["result"]["coefficients"][1]["coefficient"] == pytest.approx(2)
+
+    listed = await client.get(
+        f"/api/v1/datasets/{dataset_id}/analyses",
+        params={"analysis_type": "regression"},
+    )
+    assert listed.status_code == 200
+    assert listed.json()[0]["presentation"]["module"] == "Regresión"
+    assert listed.json()[0]["presentation"]["filter_key"] == "linear"
+
+
 async def test_rejects_non_uadec_email(client: AsyncClient) -> None:
     response = await client.get("/api/v1/datasets", headers={"X-User-Email": "user@example.com"})
     assert response.status_code == 403
